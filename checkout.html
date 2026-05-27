@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Checkout – Winterfell Technologies</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <style>
+    body{font-family:Arial,sans-serif;background:#f0f2f5;margin:0;padding:20px}
+    .checkout-container{max-width:800px;margin:0 auto;background:#fff;border-radius:12px;padding:30px}
+    h2{margin-bottom:20px}
+    .form-group{margin-bottom:20px}
+    label{display:block;margin-bottom:8px;font-weight:600}
+    input,select,textarea{width:100%;padding:10px;border:1px solid #ddd;border-radius:8px}
+    button{background:#0066ff;color:#fff;border:none;border-radius:8px;padding:12px;width:100%;font-weight:600;cursor:pointer}
+    .order-summary{background:#f5f5f5;padding:15px;border-radius:8px;margin-bottom:20px}
+    .item{display:flex;justify-content:space-between;margin-bottom:8px}
+    .total{font-weight:700;font-size:18px;margin-top:10px}
+    .error{color:#ff3333;margin-bottom:10px}
+  </style>
+</head>
+<body>
+<div class="checkout-container">
+  <h2>Complete Your Order</h2>
+  <div id="errorMsg" class="error"></div>
+  <div class="order-summary" id="orderSummary"></div>
+  <div class="form-group">
+    <label>Full Name</label>
+    <input type="text" id="fullName" required>
+  </div>
+  <div class="form-group">
+    <label>Phone Number</label>
+    <input type="tel" id="phone" required>
+  </div>
+  <div class="form-group">
+    <label>Shipping Address</label>
+    <textarea id="address" rows="3" required></textarea>
+  </div>
+  <div class="form-group">
+    <label>Payment Method</label>
+    <select id="paymentMethod"></select>
+  </div>
+  <div class="form-group">
+    <label>Upload Payment Proof (M-Pesa / Bank Slip)</label>
+    <input type="file" id="proofImage" accept="image/*">
+  </div>
+  <button id="placeOrderBtn">Place Order</button>
+</div>
+
+<script type="module">
+  import { auth, db } from './auth.js';
+  import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+  import { collection, addDoc, doc, getDoc, getDocs } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+  const CLOUDINARY_CLOUD_NAME = "dbyzsrkfj";
+  const CLOUDINARY_UPLOAD_PRESET = "winterfell_uploads";
+  
+  let userId = null;
+  let cart = [];
+  let paymentMethods = [];
+
+  onAuthStateChanged(auth, async (user) => {
+    if (!user) {
+      window.location.href = 'login.html?redirect=checkout';
+      return;
+    }
+    userId = user.uid;
+    const savedCart = localStorage.getItem('winterfell_cart');
+    if (!savedCart || JSON.parse(savedCart).length === 0) {
+      document.getElementById('errorMsg').innerText = 'Your cart is empty.';
+      return;
+    }
+    cart = JSON.parse(savedCart);
+    renderOrderSummary();
+    await loadPaymentMethods();
+    await loadUserProfile();
+  });
+
+  async function loadUserProfile() {
+    const userDoc = await getDoc(doc(db, 'users', userId));
+    const data = userDoc.data() || {};
+    document.getElementById('fullName').value = data.fullName || '';
+    document.getElementById('phone').value = data.phone || '';
+    document.getElementById('address').value = data.defaultAddress || '';
+  }
+
+  async function loadPaymentMethods() {
+    const methodsDoc = await getDoc(doc(db, 'config', 'paymentMethods'));
+    if (methodsDoc.exists()) {
+      paymentMethods = methodsDoc.data().methods || [];
+    } else {
+      paymentMethods = ['M-Pesa (Paybill 123456, Account No. YourPhone)', 'Bank Transfer: KCB 1234567890'];
+    }
+    const select = document.getElementById('paymentMethod');
+    select.innerHTML = paymentMethods.map(m => `<option value="${m}">${m}</option>`).join('');
+  }
+
+  function renderOrderSummary() {
+    const container = document.getElementById('orderSummary');
+    let html = '<h3>Order Summary</h3>';
+    let total = 0;
+    cart.forEach(item => {
+      const itemTotal = item.price * item.qty;
+      total += itemTotal;
+      html += `<div class="item"><span>${item.name} ${item.variantLabel ? '('+item.variantLabel+')' : ''} x${item.qty}</span><span>KES ${itemTotal.toLocaleString()}</span></div>`;
+    });
+    html += `<div class="total">Total: KES ${total.toLocaleString()}</div>`;
+    container.innerHTML = html;
+  }
+
+  async function uploadProof(file) {
+    const fd = new FormData();
+    fd.append('file', file);
+    fd.append('upload_preset', CLOUDINARY_UPLOAD_PRESET);
+    const res = await fetch(`https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`, { method: 'POST', body: fd });
+    const data = await res.json();
+    return data.secure_url;
+  }
+
+  document.getElementById('placeOrderBtn').addEventListener('click', async () => {
+    const fullName = document.getElementById('fullName').value.trim();
+    const phone = document.getElementById('phone').value.trim();
+    const address = document.getElementById('address').value.trim();
+    const paymentMethod = document.getElementById('paymentMethod').value;
+    const proofFile = document.getElementById('proofImage').files[0];
+    if (!fullName || !phone || !address) {
+      document.getElementById('errorMsg').innerText = 'Please fill all fields.';
+      return;
+    }
+    if (!proofFile) {
+      document.getElementById('errorMsg').innerText = 'Please upload payment proof.';
+      return;
+    }
+    try {
+      const proofUrl = await uploadProof(proofFile);
+      const total = cart.reduce((sum, i) => sum + (i.price * i.qty), 0);
+      const orderData = {
+        userId,
+        fullName,
+        phone,
+        address,
+        paymentMethod,
+        paymentProof: proofUrl,
+        total,
+        items: cart,
+        status: 'pending_payment',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      await addDoc(collection(db, 'orders'), orderData);
+      localStorage.removeItem('winterfell_cart');
+      alert('Order placed! You can track it in your account.');
+      window.location.href = 'account.html';
+    } catch (err) {
+      document.getElementById('errorMsg').innerText = err.message;
+    }
+  });
+</script>
+</body>
+</html>
