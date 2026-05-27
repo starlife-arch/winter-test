@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Order Details – Winterfell Technologies</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <style>
+    body{font-family:Arial,sans-serif;background:#f0f2f5;margin:0;padding:20px}
+    .container{max-width:800px;margin:0 auto;background:#fff;border-radius:12px;padding:30px}
+    .status{padding:4px 10px;border-radius:20px;font-size:12px;display:inline-block}
+    .status.pending_payment{background:#ffc107}
+    .status.confirmed{background:#17a2b8;color:#fff}
+    .status.packed{background:#6c757d;color:#fff}
+    .status.shipped{background:#007bff;color:#fff}
+    .status.delivered{background:#28a745;color:#fff}
+    .status.cancelled{background:#dc3545;color:#fff}
+    button{padding:8px 16px;background:#0066ff;color:#fff;border:none;border-radius:8px;cursor:pointer;margin-top:20px}
+    .proof-img{max-width:300px;margin-top:10px}
+  </style>
+</head>
+<body>
+<div class="container" id="orderContainer">Loading...</div>
+
+<script type="module">
+  import { auth, db } from './auth.js';
+  import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+  import { doc, getDoc, updateDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+  const urlParams = new URLSearchParams(window.location.search);
+  const orderId = urlParams.get('id');
+
+  onAuthStateChanged(auth, async (user) => {
+    if (!user) { window.location.href = 'login.html'; return; }
+    if (!orderId) { document.getElementById('orderContainer').innerHTML = '<p>Order ID missing.</p>'; return; }
+    const orderDoc = await getDoc(doc(db, 'orders', orderId));
+    if (!orderDoc.exists()) { document.getElementById('orderContainer').innerHTML = '<p>Order not found.</p>'; return; }
+    const order = orderDoc.data();
+    if (order.userId !== user.uid) { document.getElementById('orderContainer').innerHTML = '<p>Unauthorized.</p>'; return; }
+    renderOrder(order, orderId);
+  });
+
+  function renderOrder(order, id) {
+    let itemsHtml = '';
+    order.items.forEach(item => {
+      itemsHtml += `<div>${item.name} ${item.variantLabel ? '('+item.variantLabel+')' : ''} x${item.qty} = KES ${(item.price*item.qty).toLocaleString()}</div>`;
+    });
+    const proofHtml = order.paymentProof ? `<div><strong>Payment Proof:</strong><br><img class="proof-img" src="${order.paymentProof}" onclick="window.open(this.src)"></div>` : '';
+    document.getElementById('orderContainer').innerHTML = `
+      <h2>Order #${id.slice(-6)}</h2>
+      <p><strong>Date:</strong> ${new Date(order.createdAt).toLocaleString()}</p>
+      <p><strong>Status:</strong> <span class="status ${order.status}">${order.status.replace('_', ' ')}</span></p>
+      <p><strong>Full Name:</strong> ${order.fullName}</p>
+      <p><strong>Phone:</strong> ${order.phone}</p>
+      <p><strong>Address:</strong> ${order.address}</p>
+      <p><strong>Payment Method:</strong> ${order.paymentMethod}</p>
+      <p><strong>Total:</strong> KES ${order.total.toLocaleString()}</p>
+      <h3>Items</h3>
+      ${itemsHtml}
+      ${proofHtml}
+      ${order.status === 'pending_payment' ? `<button id="cancelBtn">Cancel Order</button>` : ''}
+      <br><button onclick="window.location.href='account.html'">Back to Account</button>
+    `;
+    if (order.status === 'pending_payment') {
+      document.getElementById('cancelBtn').addEventListener('click', async () => {
+        if (confirm('Cancel this order? (Manual refund)')) {
+          await updateDoc(doc(db, 'orders', id), { status: 'cancelled', updatedAt: new Date().toISOString() });
+          alert('Order cancelled.');
+          window.location.reload();
+        }
+      });
+    }
+  }
+</script>
+</body>
+</html>
