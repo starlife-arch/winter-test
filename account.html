@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>My Account – Winterfell Technologies</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <style>
+    body{font-family:Arial,sans-serif;background:#f0f2f5;margin:0;padding:20px}
+    .dashboard{max-width:1200px;margin:0 auto}
+    .tabs{display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap}
+    .tab-btn{padding:10px 20px;background:#fff;border:1px solid #ddd;border-radius:8px;cursor:pointer}
+    .tab-btn.active{background:#0066ff;color:#fff;border-color:#0066ff}
+    .tab-content{display:none;background:#fff;border-radius:12px;padding:20px}
+    .tab-content.active{display:block}
+    .order-card,.ticket-card{border:1px solid #ddd;border-radius:8px;padding:15px;margin-bottom:15px}
+    .status{padding:4px 10px;border-radius:20px;font-size:12px;display:inline-block}
+    .status.pending_payment{background:#ffc107;color:#333}
+    .status.confirmed{background:#17a2b8;color:#fff}
+    .status.packed{background:#6c757d;color:#fff}
+    .status.shipped{background:#007bff;color:#fff}
+    .status.delivered{background:#28a745;color:#fff}
+    .status.cancelled{background:#dc3545;color:#fff}
+    button{cursor:pointer}
+    .logout-btn{background:#dc3545;color:#fff;border:none;padding:8px 16px;border-radius:8px;margin-left:auto}
+  </style>
+</head>
+<body>
+<div class="dashboard">
+  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+    <h1>My Account</h1>
+    <button class="logout-btn" id="logoutBtn">Logout</button>
+  </div>
+  <div class="tabs">
+    <button class="tab-btn active" data-tab="orders">Orders</button>
+    <button class="tab-btn" data-tab="tickets">Support Tickets</button>
+    <button class="tab-btn" data-tab="profile">Profile</button>
+  </div>
+  <div id="ordersTab" class="tab-content active">Loading orders...</div>
+  <div id="ticketsTab" class="tab-content">Loading tickets...</div>
+  <div id="profileTab" class="tab-content">Loading profile...</div>
+</div>
+
+<script type="module">
+  import { auth, db, onAuthStateChanged, signOut } from './auth.js';
+  import { collection, query, where, getDocs, doc, getDoc, updateDoc, orderBy } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+  let userId = null;
+
+  onAuthStateChanged(auth, async (user) => {
+    if (!user) { window.location.href = 'login.html'; return; }
+    userId = user.uid;
+    loadOrders();
+    loadTickets();
+    loadProfile();
+  });
+
+  async function loadOrders() {
+    const q = query(collection(db, 'orders'), where('userId', '==', userId), orderBy('createdAt', 'desc'));
+    const snapshot = await getDocs(q);
+    const container = document.getElementById('ordersTab');
+    if (snapshot.empty) {
+      container.innerHTML = '<p>No orders yet.</p>';
+      return;
+    }
+    container.innerHTML = snapshot.docs.map(doc => {
+      const order = doc.data();
+      return `
+        <div class="order-card">
+          <div><strong>Order #${doc.id.slice(-6)}</strong> | ${new Date(order.createdAt).toLocaleDateString()}</div>
+          <div>Total: KES ${order.total.toLocaleString()}</div>
+          <div>Status: <span class="status ${order.status}">${order.status.replace('_', ' ')}</span></div>
+          <button onclick="viewOrder('${doc.id}')">View Details</button>
+          ${order.status === 'pending_payment' ? `<button onclick="cancelOrder('${doc.id}')" style="background:#dc3545;margin-left:10px;">Cancel</button>` : ''}
+        </div>
+      `;
+    }).join('');
+  }
+
+  async function loadTickets() {
+    const q = query(collection(db, 'tickets'), where('userId', '==', userId), orderBy('createdAt', 'desc'));
+    const snapshot = await getDocs(q);
+    const container = document.getElementById('ticketsTab');
+    if (snapshot.empty) {
+      container.innerHTML = '<p>No support tickets. <button onclick="newTicket()">Create Ticket</button></p>';
+      return;
+    }
+    container.innerHTML = snapshot.docs.map(doc => {
+      const ticket = doc.data();
+      return `
+        <div class="ticket-card">
+          <div><strong>${ticket.subject}</strong> | ${new Date(ticket.createdAt).toLocaleDateString()}</div>
+          <div>Status: ${ticket.status === 'open' ? 'Open' : 'Closed'}</div>
+          <button onclick="viewTicket('${doc.id}')">View Conversation</button>
+        </div>
+      `;
+    }).join('');
+    container.innerHTML += '<p><button onclick="newTicket()">+ New Ticket</button></p>';
+  }
+
+  async function loadProfile() {
+    const userDoc = await getDoc(doc(db, 'users', userId));
+    const userData = userDoc.data() || {};
+    document.getElementById('profileTab').innerHTML = `
+      <h3>Profile Information</h3>
+      <p><strong>Email:</strong> ${userData.email}</p>
+      <p><strong>Phone:</strong> <span id="profilePhone">${userData.phone || 'Not set'}</span></p>
+      <p><strong>Default Address:</strong> <span id="profileAddress">${userData.defaultAddress || 'Not set'}</span></p>
+      <button onclick="editProfile()">Edit Profile</button>
+    `;
+  }
+
+  window.viewOrder = (orderId) => { window.location.href = `order-detail.html?id=${orderId}`; };
+  window.cancelOrder = async (orderId) => {
+    if (!confirm('Cancel this order? (Refund will be manual)')) return;
+    await updateDoc(doc(db, 'orders', orderId), { status: 'cancelled', updatedAt: new Date().toISOString() });
+    loadOrders();
+  };
+  window.newTicket = () => { window.location.href = 'ticket-detail.html?new=1'; };
+  window.viewTicket = (ticketId) => { window.location.href = `ticket-detail.html?id=${ticketId}`; };
+  window.editProfile = () => {
+    const newPhone = prompt('Enter phone number', document.getElementById('profilePhone').innerText);
+    if (newPhone) updateDoc(doc(db, 'users', userId), { phone: newPhone });
+    const newAddress = prompt('Enter default shipping address', document.getElementById('profileAddress').innerText);
+    if (newAddress) updateDoc(doc(db, 'users', userId), { defaultAddress: newAddress });
+    loadProfile();
+  };
+  document.getElementById('logoutBtn').addEventListener('click', () => signOut(auth).then(() => window.location.href = 'index.html'));
+
+  // Tab switching
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      const tab = btn.dataset.tab;
+      document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+      document.getElementById(`${tab}Tab`).classList.add('active');
+    });
+  });
+</script>
+</body>
+</html>
