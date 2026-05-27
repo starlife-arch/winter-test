@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Login – Winterfell Technologies</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <style>
+    body{font-family:Arial,sans-serif;background:#f0f2f5;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;padding:20px}
+    .auth-card{background:#fff;border-radius:12px;padding:40px;width:100%;max-width:400px;box-shadow:0 2px 12px rgba(0,0,0,0.1)}
+    h2{text-align:center;margin-bottom:24px}
+    input{width:100%;padding:12px;margin-bottom:16px;border:1px solid #ddd;border-radius:8px}
+    button{width:100%;padding:12px;background:#0066ff;color:#fff;border:none;border-radius:8px;font-weight:600;cursor:pointer}
+    .toggle{text-align:center;margin-top:16px;color:#0066ff;cursor:pointer}
+    .error{color:#ff3333;margin-bottom:12px;text-align:center}
+  </style>
+</head>
+<body>
+<div class="auth-card">
+  <h2 id="formTitle">Login</h2>
+  <div id="errorMsg" class="error"></div>
+  <input type="email" id="email" placeholder="Email address">
+  <input type="password" id="password" placeholder="Password">
+  <button id="submitBtn">Login</button>
+  <div class="toggle" id="toggleMode">Don't have an account? Register</div>
+</div>
+
+<script type="module">
+  import { auth, db } from './auth.js';
+  import { signInWithEmailAndPassword, createUserWithEmailAndPassword } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+  import { doc, setDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+  let isLogin = true;
+  const urlParams = new URLSearchParams(window.location.search);
+  if (urlParams.get('signup') === '1') isLogin = false;
+
+  const formTitle = document.getElementById('formTitle');
+  const submitBtn = document.getElementById('submitBtn');
+  const toggleMode = document.getElementById('toggleMode');
+  const errorMsg = document.getElementById('errorMsg');
+  const emailInput = document.getElementById('email');
+  const passwordInput = document.getElementById('password');
+
+  function updateUI() {
+    if (isLogin) {
+      formTitle.innerText = 'Login';
+      submitBtn.innerText = 'Login';
+      toggleMode.innerText = "Don't have an account? Register";
+    } else {
+      formTitle.innerText = 'Register';
+      submitBtn.innerText = 'Register';
+      toggleMode.innerText = 'Already have an account? Login';
+    }
+  }
+  updateUI();
+
+  toggleMode.addEventListener('click', () => {
+    isLogin = !isLogin;
+    updateUI();
+    errorMsg.innerText = '';
+  });
+
+  async function handleSubmit() {
+    const email = emailInput.value.trim();
+    const password = passwordInput.value;
+    if (!email || !password) {
+      errorMsg.innerText = 'Please fill both fields';
+      return;
+    }
+    try {
+      if (isLogin) {
+        await signInWithEmailAndPassword(auth, email, password);
+        const redirect = urlParams.get('redirect');
+        window.location.href = redirect === 'checkout' ? 'checkout.html' : 'index.html';
+      } else {
+        const userCred = await createUserWithEmailAndPassword(auth, email, password);
+        await setDoc(doc(db, 'users', userCred.user.uid), {
+          email: email,
+          createdAt: new Date().toISOString(),
+          phone: '',
+          addresses: []
+        });
+        window.location.href = 'index.html';
+      }
+    } catch (err) {
+      errorMsg.innerText = err.message;
+    }
+  }
+  submitBtn.addEventListener('click', handleSubmit);
+  document.addEventListener('keypress', (e) => { if (e.key === 'Enter') handleSubmit(); });
+</script>
+</body>
+</html>
