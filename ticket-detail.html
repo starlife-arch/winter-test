@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Support Ticket – Winterfell Technologies</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <style>
+    body{font-family:Arial,sans-serif;background:#f0f2f5;margin:0;padding:20px}
+    .container{max-width:800px;margin:0 auto;background:#fff;border-radius:12px;padding:30px}
+    .message{background:#f5f5f5;border-radius:8px;padding:10px;margin-bottom:10px}
+    .message.admin{background:#e3f2fd}
+    .message small{color:#666}
+    textarea{width:100%;padding:10px;border:1px solid #ddd;border-radius:8px;margin-top:10px}
+    button{padding:8px 16px;background:#0066ff;color:#fff;border:none;border-radius:8px;cursor:pointer}
+    .closed-msg{color:#dc3545;margin-top:10px}
+  </style>
+</head>
+<body>
+<div class="container" id="ticketContainer">Loading...</div>
+
+<script type="module">
+  import { auth, db } from './auth.js';
+  import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+  import { doc, getDoc, updateDoc, arrayUnion, addDoc, collection } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+  const urlParams = new URLSearchParams(window.location.search);
+  const ticketId = urlParams.get('id');
+  const isNew = urlParams.get('new') === '1';
+
+  onAuthStateChanged(auth, async (user) => {
+    if (!user) { window.location.href = 'login.html'; return; }
+    if (isNew) {
+      renderNewTicketForm(user.uid);
+    } else if (ticketId) {
+      const ticketDoc = await getDoc(doc(db, 'tickets', ticketId));
+      if (!ticketDoc.exists()) { document.getElementById('ticketContainer').innerHTML = '<p>Ticket not found.</p>'; return; }
+      const ticket = ticketDoc.data();
+      if (ticket.userId !== user.uid) { document.getElementById('ticketContainer').innerHTML = '<p>Unauthorized.</p>'; return; }
+      renderTicket(ticket, ticketId);
+    } else {
+      document.getElementById('ticketContainer').innerHTML = '<p>No ticket specified.</p>';
+    }
+  });
+
+  function renderNewTicketForm(userId) {
+    document.getElementById('ticketContainer').innerHTML = `
+      <h2>New Support Ticket</h2>
+      <input type="text" id="subject" placeholder="Subject" style="width:100%; padding:10px; margin-bottom:10px;">
+      <textarea id="message" rows="5" placeholder="Describe your issue..."></textarea>
+      <button id="submitTicket">Submit</button>
+      <button onclick="window.location.href='account.html'" style="background:#6c757d; margin-left:10px;">Cancel</button>
+    `;
+    document.getElementById('submitTicket').addEventListener('click', async () => {
+      const subject = document.getElementById('subject').value.trim();
+      const msg = document.getElementById('message').value.trim();
+      if (!subject || !msg) { alert('Please fill subject and message'); return; }
+      const ticketData = {
+        userId,
+        subject,
+        status: 'open',
+        createdAt: new Date().toISOString(),
+        messages: [{ from: 'user', text: msg, timestamp: new Date().toISOString() }]
+      };
+      const docRef = await addDoc(collection(db, 'tickets'), ticketData);
+      alert('Ticket created!');
+      window.location.href = `ticket-detail.html?id=${docRef.id}`;
+    });
+  }
+
+  function renderTicket(ticket, id) {
+    const messagesHtml = ticket.messages.map(m => `
+      <div class="message ${m.from === 'admin' ? 'admin' : ''}">
+        <strong>${m.from === 'admin' ? 'Support Team' : 'You'}:</strong> ${m.text}<br>
+        <small>${new Date(m.timestamp).toLocaleString()}</small>
+      </div>
+    `).join('');
+    const isClosed = ticket.status === 'closed';
+    document.getElementById('ticketContainer').innerHTML = `
+      <h2>Ticket: ${ticket.subject}</h2>
+      <div>Status: <strong>${ticket.status === 'open' ? 'Open' : 'Closed'}</strong></div>
+      <div class="messages" style="margin-top:20px">${messagesHtml}</div>
+      ${!isClosed ? `
+        <textarea id="replyMsg" rows="3" placeholder="Type your reply..."></textarea>
+        <button id="sendReply">Send Reply</button>
+      ` : `<div class="closed-msg">This ticket is closed. You cannot add more messages.</div>`}
+      <button onclick="window.location.href='account.html'" style="margin-top:20px;">Back to Account</button>
+    `;
+    if (!isClosed) {
+      document.getElementById('sendReply').addEventListener('click', async () => {
+        const reply = document.getElementById('replyMsg').value.trim();
+        if (!reply) return;
+        await updateDoc(doc(db, 'tickets', id), {
+          messages: arrayUnion({
+            from: 'user',
+            text: reply,
+            timestamp: new Date().toISOString()
+          })
+        });
+        window.location.reload();
+      });
+    }
+  }
+</script>
+</body>
+</html>
